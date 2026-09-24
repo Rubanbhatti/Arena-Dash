@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0A1440">
+  <title>Leaderboard</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Barlow+Semi+Condensed:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { overflow-y: auto; }
+    .wall { max-width: 1100px; margin: 0 auto; padding: 3vh 4vw 4vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 4vw; align-items: start; }
+    .side h1 { font-family: var(--display); font-weight: 400; color: var(--token); text-shadow: 5px 5px 0 var(--spinner); font-size: clamp(3rem, 7vw, 6rem); line-height: .86; margin: 0 0 20px; }
+    .side p { color: var(--muted); font-size: 1.3rem; margin: 0 0 18px; }
+    .side .play-url { font-family: var(--display); font-size: clamp(1rem, 2vw, 1.4rem); color: var(--line); word-break: break-all; }
+    .side .qr { background: #fff; padding: 12px; border-radius: 16px; width: min(260px, 100%); margin: 8px 0 18px; }
+    .side .qr img { display: block; width: 100%; height: auto; }
+    .tools { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .tools .btn { width: auto; min-height: 44px; font-size: 1rem; }
+    .wall .rows { gap: 8px; }
+    .wall .row { padding: 1.2vh 20px; grid-template-columns: 4.2rem 1fr auto; }
+    .wall .row .r { font-size: 1.6rem; }
+    .wall .row .n { font-size: 1.6rem; }
+    .wall .row .s { font-size: 1.9rem; }
+    .row.fresh { animation: flash 1.6s ease-out; }
+    @keyframes flash { 0% { background: var(--token); color: var(--navy); } 100% { background: #13205A; } }
+    @media (max-width: 760px) { .wall { grid-template-columns: 1fr; } }
+    @media (prefers-reduced-motion: reduce) { .row.fresh { animation: none; } }
+  </style>
+</head>
+<body class="court-bg" style="min-height:100%">
+  <main class="wall">
+    <div class="side">
+      <h1 id="ev-title">Arena<br>Dash</h1>
+      <p>Scan to play. Best score per player counts.</p>
+      <div class="qr" id="qr-box" hidden><img id="qr" alt="QR code to open the game"></div>
+      <div class="play-url" id="play-url"></div>
+      <div class="tools">
+        <a class="btn ghost" href="./" style="text-decoration:none;display:grid;place-items:center">Open game</a>
+        <button class="btn ghost" id="btn-csv" type="button">Download CSV</button>
+      </div>
+    </div>
+    <div>
+      <div class="board-head">
+        <h2 style="font-family:var(--display);font-weight:400;font-size:2.4rem;margin:0;color:var(--line)">Top 20</h2>
+        <span class="live" id="live">Updates live</span>
+      </div>
+      <ol class="rows" id="rows"><li class="empty">Loading scores…</li></ol>
+    </div>
+  </main>
+
+  <script src="config.js"></script>
+  <script type="module">
+    import { createBoard } from "./js/board.js";
+    const CFG = window.ARENA_CONFIG || {};
+    const board = createBoard(CFG);
+    const $ = id => document.getElementById(id);
+
+    document.title = (CFG.eventName || "Arena Dash") + " leaderboard";
+    const t = $("ev-title"); t.textContent = "";
+    (CFG.eventName || "Arena Dash").split(/\s+/).forEach((w, i) => { if (i) t.append(document.createElement("br")); t.append(w); });
+
+    // The game lives in the same folder as this page
+    const gameUrl = new URL("./", location.href).href;
+    $("play-url").textContent = gameUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (location.protocol.startsWith("http")) {
+      $("qr").src = "https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=0&data=" + encodeURIComponent(gameUrl);
+      $("qr").onload = () => { $("qr-box").hidden = false; };
+    }
+
+    let prev = new Map();
+    board.subscribe(rows => {
+      const list = $("rows");
+      list.innerHTML = "";
+      if (!rows.length) { list.innerHTML = `<li class="empty">No scores yet. Be the first on the board.</li>`; return; }
+      rows.slice(0, 20).forEach((r, i) => {
+        const li = document.createElement("li");
+        const changed = prev.size && prev.get(r.id) !== r.score;
+        li.className = "row" + (i < 3 ? ` top${i + 1}` : "") + (changed ? " fresh" : "");
+        const rk = document.createElement("span"); rk.className = "r"; rk.textContent = i + 1;
+        const nm = document.createElement("span"); nm.className = "n"; nm.textContent = r.name;
+        const sc = document.createElement("span"); sc.className = "s"; sc.textContent = r.score;
+        li.append(rk, nm, sc); list.append(li);
+      });
+      prev = new Map(rows.map(r => [r.id, r.score]));
+      $("live").classList.remove("off"); $("live").textContent = board.mode === "local" ? "This device only" : "Updates live";
+    }, err => {
+      console.error(err);
+      $("live").classList.add("off"); $("live").textContent = "Reconnecting…";
+      setTimeout(() => location.reload(), 15000);
+    }, 50);
+
+    $("btn-csv").onclick = async () => {
+      const btn = $("btn-csv"); btn.disabled = true; btn.textContent = "Preparing…";
+      try {
+        const rows = await board.fetchAll(1000);
+        const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+        const lines = [["rank", "name", "score", "reached_at"].join(",")].concat(
+          rows.map((r, i) => [i + 1, esc(r.name), r.score, esc(new Date(r.time).toISOString())].join(",")));
+        const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "leaderboard.csv";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      } catch (e) {
+        console.error(e); alert("Couldn't download the scores. Check your connection and try again.");
+      } finally { btn.disabled = false; btn.textContent = "Download CSV"; }
+    };
+  </script>
+</body>
+</html>

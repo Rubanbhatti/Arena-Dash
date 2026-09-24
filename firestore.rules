@@ -1,0 +1,80 @@
+rules_version = '2';
+
+// Arena Dash — Firestore security rules.
+// Paste into Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function docPath(col, id) { return /databases/$(database)/documents/$(col)/$(id); }
+
+    // Event switch: create config/event with { enabled: false } to stop new scores.
+    function eventOpen() {
+      return !exists(docPath('config', 'event'))
+        || get(docPath('config', 'event')).data.enabled == true;
+    }
+    function validName(n) { return n is string && n.size() >= 1 && n.size() <= 16; }
+    function count(v, max) { return v is int && v >= 0 && v <= max; }
+
+    // Highest score the game can realistically produce. Raise it if you
+    // make rounds longer or change point values in config.js.
+    function maxScore() { return 5000; }
+
+    match /config/{id} {
+      allow read: if true;
+      allow write: if false;            // edit in the Firebase console only
+    }
+
+    // One document per finished round (private audit log).
+    match /scores/{attemptId} {
+      allow read: if false;
+      allow create: if signedIn() && eventOpen()
+        && attemptId.matches('^[A-Za-z0-9]{12,40}$')
+        && request.resource.data.keys().hasOnly(['name','score','coins','gems','hits','uid','createdAt'])
+        && request.resource.data.keys().hasAll(['name','score','coins','gems','hits','uid','createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && validName(request.resource.data.name)
+        && count(request.resource.data.score, maxScore())
+        && count(request.resource.data.coins, 1000)
+        && count(request.resource.data.gems, 200)
+        && count(request.resource.data.hits, 1000)
+        && request.resource.data.createdAt == request.time
+        // Rate limit: the same batch must stamp limits/{uid}, and the previous
+        // stamp must be at least 45 seconds old (a round lasts 60+ seconds).
+        && getAfter(docPath('limits', request.auth.uid)).data.last == request.time
+        && (!exists(docPath('limits', request.auth.uid))
+            || request.time > get(docPath('limits', request.auth.uid)).data.last + duration.value(45, 's'));
+      allow update, delete: if false;
+    }
+
+    match /limits/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['last'])
+        && request.resource.data.last == request.time;
+      allow delete: if false;
+    }
+
+    // Public leaderboard: best score per player (device + name).
+    match /best/{bestId} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['name','key','score','uid','attemptId','updatedAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.key is string
+        && request.resource.data.key.matches('^[a-z0-9-]{1,60}$')
+        && bestId == request.auth.uid + '_' + request.resource.data.key
+        && validName(request.resource.data.name)
+        && request.resource.data.score is int
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.attemptId is string
+        // Must be written together with a brand-new round of the same score.
+        && !exists(docPath('scores', request.resource.data.attemptId))
+        && getAfter(docPath('scores', request.resource.data.attemptId)).data.score == request.resource.data.score
+        && getAfter(docPath('scores', request.resource.data.attemptId)).data.uid == request.auth.uid
+        // Only ever goes up.
+        && (resource == null || request.resource.data.score > resource.data.score);
+      allow delete: if false;           // remove bad entries in the Firebase console
+    }
+  }
+}

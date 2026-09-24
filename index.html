@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0A1440">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="description" content="Arena Dash: a 60-second arcade challenge with a live leaderboard.">
+  <title>Arena Dash</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Barlow+Semi+Condensed:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Welcome -->
+<section id="screen-welcome" class="screen court-bg active">
+  <div class="welcome">
+    <h1 class="title" id="title">Arena<br>Dash</h1>
+    <p class="subtitle" id="subtitle"></p>
+
+    <ul class="how">
+      <li><span class="ico"><i class="ico-coin"></i></span><span><b>Tokens</b> +<span data-pts="coin">10</span></span></li>
+      <li><span class="ico"><i class="ico-gem"></i></span><span><b>Gems</b> +<span data-pts="gem">40</span>, but they vanish fast</span></li>
+      <li><span class="ico"><i class="ico-bolt"></i></span><span><b>Bolts</b> give you a speed boost</span></li>
+      <li><span class="ico"><i class="ico-spin"></i></span><span><b>Spinners</b> cost −<span data-pts="hitPenalty">10</span> and stun you</span></li>
+    </ul>
+
+    <form id="start-form" novalidate>
+      <label class="field">
+        <span id="name-label">Your name</span>
+        <input id="name" type="text" maxlength="16" autocomplete="nickname" autocapitalize="words"
+               enterkeyhint="go" spellcheck="false" placeholder="e.g. Ayesha K">
+      </label>
+      <p class="error" id="start-error" role="alert"></p>
+      <div class="stack">
+        <button class="btn primary" id="btn-start" type="submit">Start game</button>
+        <button class="btn ghost" id="btn-board" type="button">View leaderboard</button>
+      </div>
+    </form>
+    <p class="note" id="mode-note"></p>
+  </div>
+</section>
+
+<!-- Gameplay -->
+<section id="screen-game" class="screen">
+  <header class="scoreboard">
+    <div class="sb-cell">
+      <span class="sb-label">Score</span>
+      <span class="sb-num" id="hud-score">0</span>
+    </div>
+    <div class="sb-cell sb-time" id="hud-time-wrap" aria-label="Time left">
+      <span class="sb-num" id="hud-time">60</span>
+    </div>
+    <div class="sb-cell sb-tools">
+      <button class="icon-btn" id="btn-mute" type="button" aria-label="Mute sound">
+        <svg viewBox="0 0 24 24" id="ico-sound"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-pause" type="button" aria-label="Pause">
+        <svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="play">
+    <div class="stage" id="stage">
+      <canvas id="cv" aria-label="Game arena"></canvas>
+      <div class="overlay" id="overlay"></div>
+    </div>
+    <div class="dpad-wrap">
+      <div class="dpad" id="dpad">
+        <button class="up" data-dir="up" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M12 5l8 11H4z"/></svg></button>
+        <button class="left" data-dir="left" aria-label="Left"><svg viewBox="0 0 24 24"><path d="M5 12l11-8v16z"/></svg></button>
+        <span class="hub"></span>
+        <button class="right" data-dir="right" aria-label="Right"><svg viewBox="0 0 24 24"><path d="M19 12L8 20V4z"/></svg></button>
+        <button class="down" data-dir="down" aria-label="Down"><svg viewBox="0 0 24 24"><path d="M12 19L4 8h16z"/></svg></button>
+      </div>
+      <p class="swipe-hint">Or swipe on the arena</p>
+    </div>
+  </div>
+</section>
+
+<!-- Result -->
+<section id="screen-over" class="screen court-bg">
+  <div class="result welcome">
+    <h2>Time's up, <span id="over-name"></span></h2>
+    <div class="final" id="over-score">0</div>
+    <div class="stats">
+      <div class="stat"><strong id="st-coins">0</strong><span>tokens</span></div>
+      <div class="stat"><strong id="st-gems">0</strong><span>gems</span></div>
+      <div class="stat"><strong id="st-hits">0</strong><span>hits</span></div>
+    </div>
+    <div class="status" id="over-status" role="status" aria-live="polite">Saving your score…</div>
+    <div class="stack">
+      <button class="btn primary" id="btn-again" type="button">Play again</button>
+      <button class="btn ghost" id="btn-over-board" type="button">View leaderboard</button>
+    </div>
+  </div>
+</section>
+
+<!-- Leaderboard -->
+<section id="screen-board" class="screen">
+  <div class="board">
+    <div class="board-head">
+      <h2>Leaderboard</h2>
+      <span class="live" id="board-live">Updates live</span>
+    </div>
+    <ol class="rows" id="board-rows"></ol>
+    <button class="btn primary" id="btn-board-back" type="button">Back</button>
+  </div>
+</section>
+
+<!-- Event closed -->
+<section id="screen-closed" class="screen court-bg">
+  <div class="result welcome">
+    <h1 class="title">Game<br>over</h1>
+    <p class="subtitle">This event has ended and scores are no longer being accepted. Thanks for playing.</p>
+    <button class="btn primary" id="btn-closed-board" type="button">See final leaderboard</button>
+  </div>
+</section>
+
+<script src="config.js"></script>
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
