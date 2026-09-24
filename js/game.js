@@ -1,114 +1,33 @@
 import { createBoard, newAttemptId, nameKey } from "./board.js";
+import { MAPS, buildMap } from "./maps.js";
+import { Round, POWERS, badgesFor } from "./engine.js";
+import { createSound } from "./audio.js";
+import { createRenderer2D } from "./render2d.js";
 
 /* ============================================================
-   Config
+   Config + storage
    ============================================================ */
 const CFG = Object.assign({
-  eventName: "Arena Dash",
-  eventSubtitle: "",
-  enabled: true,
-  roundSeconds: 60,
-  maxAttemptsPerName: 0,
-  nameLabel: "Your name",
-  points: {}
+  eventName: "Arena Dash", eventSubtitle: "", enabled: true,
+  roundSeconds: 60, maxAttemptsPerName: 0, nameLabel: "Your name", points: {}
 }, window.ARENA_CONFIG || {});
 const PTS = Object.assign({ coin: 10, gem: 40, hitPenalty: 10 }, CFG.points);
 const board = createBoard(CFG);
 const $ = id => document.getElementById(id);
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 const store = {
   get(k, d) { try { const v = localStorage.getItem("arenaDash." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("arenaDash." + k, JSON.stringify(v)); } catch {} }
 };
-
-/* ============================================================
-   Arena layout (13 x 18). '#' = barrier, '.' = floor.
-   Fully connected, no dead ends.
-   ============================================================ */
-const MAP = [
-  "#############",
-  "#.....#.....#",
-  "#.##.....##.#",
-  "#.#..#.#..#.#",
-  "#...##.##...#",
-  "##.#.....#.##",
-  "#..#.###.#..#",
-  "#...........#",
-  "#.##.#.#.##.#",
-  "#....#.#....#",
-  "#.##.....##.#",
-  "#..#.###.#..#",
-  "##.#.....#.##",
-  "#...##.##...#",
-  "#.#..#.#..#.#",
-  "#.##.....##.#",
-  "#.....#.....#",
-  "#############"
-];
-const COLS = MAP[0].length, ROWS = MAP.length;
-const open = (x, y) => y >= 0 && y < ROWS && x >= 0 && x < COLS && MAP[y][x] === ".";
-const FLOOR = [];
-for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (open(x, y)) FLOOR.push({ x, y });
-
-const START = { x: 6, y: 7 };
-const SPAWNS = [{ x: 1, y: 1 }, { x: 11, y: 1 }, { x: 1, y: 16 }, { x: 11, y: 16 }, { x: 6, y: 12 }, { x: 6, y: 3 }];
-const DIRS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
-const DIR_LIST = Object.values(DIRS);
-
-const TUNE = {
-  playerSpeed: 5.6,     // tiles per second
-  boostSpeed: 8.6,
-  boostTime: 4,
-  hazardStart: 3.0,
-  hazardEnd: 4.4,
-  chase: 0.35,          // chance a spinner steers toward you at a junction
-  coins: 14,
-  stun: 0.8,
-  invuln: 1.8,
-  gemEvery: [8, 13], gemLife: 6,
-  boltEvery: [14, 20], boltLife: 7,
-  extraSpinners: [0.33, 0.66] // fractions of the round when a new spinner joins
-};
-
-/* ============================================================
-   Sound (tiny synth, no files needed)
-   ============================================================ */
-const Sound = (() => {
-  let ctx = null;
-  let muted = store.get("muted", false);
-  function unlock() {
-    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } }
-    if (ctx.state === "suspended") ctx.resume();
-  }
-  function tone(freq, dur = .08, type = "square", vol = .05, slide = 0, delay = 0) {
-    if (muted || !ctx) return;
-    const t = ctx.currentTime + delay;
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(freq * slide, t + dur);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(.0001, t + dur);
-    o.connect(g).connect(ctx.destination);
-    o.start(t); o.stop(t + dur + .03);
-  }
-  return {
-    unlock,
-    get muted() { return muted; },
-    toggle() { muted = !muted; store.set("muted", muted); return muted; },
-    coin() { tone(988, .06, "square", .04); tone(1318, .08, "square", .04, 0, .05); },
-    gem() { tone(660, .1, "triangle", .08); tone(990, .1, "triangle", .08, 0, .08); tone(1320, .14, "triangle", .07, 0, .16); },
-    bolt() { tone(260, .35, "sawtooth", .05, 3.2); },
-    hit() { tone(220, .3, "sawtooth", .08, .35); },
-    tick() { tone(520, .07, "square", .04); },
-    go() { tone(1046, .25, "square", .06); },
-    count() { tone(523, .15, "square", .05); },
-    end() { tone(784, .15, "square", .06); tone(622, .15, "square", .06, 0, .15); tone(523, .35, "square", .06, 0, .3); }
-  };
-})();
-
+const Sound = createSound(store);
 const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
+
+const SKINS = [
+  { name: "Snow", color: "#F5F7FF" }, { name: "Lime", color: "#B8FF5C" }, { name: "Coral", color: "#FF8C6B" },
+  { name: "Sky", color: "#6BD4FF" }, { name: "Violet", color: "#B58CFF" }
+];
+let skin = store.get("skin", SKINS[0].color);
+let gfx = store.get("gfx", "3d");
 
 /* ============================================================
    Screens + branding
@@ -121,8 +40,7 @@ function show(id) {
 
 (function brand() {
   document.title = CFG.eventName;
-  const t = $("title");
-  t.textContent = "";
+  const t = $("title"); t.textContent = "";
   CFG.eventName.split(/\s+/).forEach((w, i) => { if (i) t.append(document.createElement("br")); t.append(w); });
   $("subtitle").textContent = CFG.eventSubtitle || "";
   $("name-label").textContent = CFG.nameLabel;
@@ -134,396 +52,201 @@ function show(id) {
     n.textContent = "Test mode: scores are saved on this device only. Add your Firebase settings to config.js to share the leaderboard.";
     n.classList.add("warn");
   }
+  const wrap = $("skins");
+  SKINS.forEach(s => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-label", s.name);
+    b.style.background = s.color; b.dataset.color = s.color;
+    b.onclick = () => { skin = s.color; store.set("skin", skin); syncPickers(); Sound.unlock(); Sound.click(); };
+    wrap.append(b);
+  });
+  document.querySelectorAll("[data-gfx]").forEach(b => b.onclick = () => {
+    gfx = b.dataset.gfx; store.set("gfx", gfx); syncPickers(); Sound.unlock(); Sound.click();
+    if (gfx === "3d") { store.set("quality", "high"); import("./render3d.js").catch(() => {}); }
+  });
+  syncPickers();
+  updateBestLine();
+  $("name").addEventListener("input", updateBestLine);
   updateMuteIcon();
+  if (gfx === "3d") import("./render3d.js").catch(() => {});
 })();
+
+function syncPickers() {
+  document.querySelectorAll("#skins button").forEach(b => b.setAttribute("aria-checked", String(b.dataset.color === skin)));
+  document.querySelectorAll("[data-gfx]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.gfx === gfx)));
+}
+function updateBestLine() {
+  const name = $("name").value.trim();
+  const pb = name ? store.get("pb", {})[nameKey(name)] : undefined;
+  const el = $("best-line");
+  if (pb === undefined) { el.hidden = true; return; }
+  el.hidden = false; el.textContent = "";
+  const s = document.createElement("strong"); s.textContent = pb;
+  el.append("Your best: ", s);
+}
 
 if (!CFG.enabled) show("screen-closed");
 else board.isOpen().then(ok => { if (!ok) show("screen-closed"); }).catch(() => {});
 
 /* ============================================================
-   Game state
+   Renderer management (3D with automatic 2D fallback)
    ============================================================ */
-const cv = $("cv");
-const ctx = cv.getContext("2d");
-let T = 24;                 // tile size in CSS pixels
-let dpr = 1;
-let staticLayer = null;     // pre-rendered floor + barriers
+const stage = $("stage");
+let R = null, rKind = null, rQuality = null, currentMap = null;
 
-let G = null;               // current round
-let phase = "idle";         // idle | count | play | paused | over
-let lastFrame = 0;
-let playerName = "";
-let lastResult = null;
-let wakeLock = null;
-
-function mover(x, y) { return { x, y, dir: null, next: null, t: 0, moving: false }; }
-function posOf(m) { return m.moving ? { x: m.x + m.dir.x * m.t, y: m.y + m.dir.y * m.t } : { x: m.x, y: m.y }; }
-const rand = (a, b) => a + Math.random() * (b - a);
-
-function newRound() {
-  G = {
-    attemptId: newAttemptId(),
-    time: CFG.roundSeconds,
-    elapsed: 0,
-    score: 0, coins: 0, gems: 0, hits: 0,
-    player: mover(START.x, START.y),
-    stun: 0, invuln: 0, boost: 0,
-    hazards: [],
-    extraAdded: 0,
-    items: [],
-    gem: null, bolt: null,
-    nextGem: rand(...TUNE.gemEvery),
-    nextBolt: rand(...TUNE.boltEvery),
-    popups: [],
-    shake: 0,
-    lastWhole: CFG.roundSeconds
-  };
-  [SPAWNS[0], SPAWNS[1], SPAWNS[3]].forEach(s => G.hazards.push(Object.assign(mover(s.x, s.y), { spin: Math.random() * 6 })));
-  for (let i = 0; i < TUNE.coins; i++) G.items.push(freeTile());
-  updateHud();
-}
-
-function occupied(x, y) {
-  return G.items.some(c => c.x === x && c.y === y) ||
-    (G.gem && G.gem.x === x && G.gem.y === y) ||
-    (G.bolt && G.bolt.x === x && G.bolt.y === y);
-}
-function freeTile() {
-  const p = posOf(G.player);
-  for (let tries = 0; tries < 60; tries++) {
-    const c = FLOOR[(Math.random() * FLOOR.length) | 0];
-    if (Math.abs(c.x - p.x) + Math.abs(c.y - p.y) < 3) continue;
-    if (occupied(c.x, c.y)) continue;
-    return { x: c.x, y: c.y };
-  }
-  return { ...FLOOR[(Math.random() * FLOOR.length) | 0] };
-}
-
-/* ---------- Movement (tile-to-tile, smooth) ---------- */
-function stepMover(m, speed, dt, choose) {
-  let rem = speed * dt;
-  for (let guard = 0; rem > 1e-6 && guard < 8; guard++) {
-    if (m.moving) {
-      const s = Math.min(rem, 1 - m.t);
-      m.t += s; rem -= s;
-      if (m.t >= 1 - 1e-6) { m.x += m.dir.x; m.y += m.dir.y; m.t = 0; m.moving = false; }
-    } else {
-      choose(m);
-      if (m.dir && open(m.x + m.dir.x, m.y + m.dir.y)) m.moving = true;
-      else break;
+async function ensureRenderer() {
+  const quality = store.get("quality", "high");
+  if (R && rKind === gfx && (gfx === "2d" || rQuality === quality)) { R.setSkin(skin); return; }
+  if (R) { R.dispose(); R = null; }
+  stage.classList.remove("is3d");
+  if (gfx === "3d") {
+    try {
+      const mod = await import("./render3d.js");
+      R = await mod.createRenderer3D(stage, { quality, skin, reducedMotion });
+      rKind = "3d"; rQuality = quality; stage.classList.add("is3d");
+      return;
+    } catch (e) {
+      console.warn("3D unavailable, using classic graphics", e);
+      gfx = "2d"; syncPickers();
     }
   }
-}
-
-function choosePlayer(m) {
-  if (m.next && open(m.x + m.next.x, m.y + m.next.y)) m.dir = m.next;
-}
-
-function chooseHazard(h) {
-  const p = posOf(G.player);
-  let opts = DIR_LIST.filter(d => open(h.x + d.x, h.y + d.y) && !(h.dir && d.x === -h.dir.x && d.y === -h.dir.y));
-  if (!opts.length) opts = DIR_LIST.filter(d => open(h.x + d.x, h.y + d.y));
-  if (Math.random() < TUNE.chase) {
-    opts.sort((a, b) => dist2(h.x + a.x, h.y + a.y, p) - dist2(h.x + b.x, h.y + b.y, p));
-    h.dir = opts[0];
-  } else {
-    h.dir = opts[(Math.random() * opts.length) | 0];
-  }
-}
-const dist2 = (x, y, p) => (x - p.x) ** 2 + (y - p.y) ** 2;
-
-function steer(name) {
-  if (phase !== "play" && phase !== "count") return;
-  const d = DIRS[name];
-  const m = G.player;
-  m.next = d;
-  if (!m.moving) return;
-  // Reverse instantly mid-corridor
-  if (d.x === -m.dir.x && d.y === -m.dir.y) {
-    m.x += m.dir.x; m.y += m.dir.y; m.t = 1 - m.t; m.dir = d;
-    return;
-  }
-  // Forgiving turns: if you only just left a junction, turn from it
-  if (m.t < .22 && (d.x !== m.dir.x || d.y !== m.dir.y) && open(m.x + d.x, m.y + d.y)) {
-    m.t = 0; m.moving = false; m.dir = d;
-  }
-}
-
-/* ---------- Round update ---------- */
-function update(dt) {
-  G.elapsed += dt;
-  G.time = Math.max(0, CFG.roundSeconds - G.elapsed);
-
-  // countdown ticks in the last 5 seconds
-  const whole = Math.ceil(G.time);
-  if (whole !== G.lastWhole) {
-    G.lastWhole = whole;
-    if (whole <= 5 && whole > 0) Sound.tick();
-  }
-
-  // Player
-  G.invuln = Math.max(0, G.invuln - dt);
-  G.boost = Math.max(0, G.boost - dt);
-  if (G.stun > 0) G.stun = Math.max(0, G.stun - dt);
-  else stepMover(G.player, G.boost > 0 ? TUNE.boostSpeed : TUNE.playerSpeed, dt, choosePlayer);
-
-  // Spinners join as the round goes on
-  const frac = G.elapsed / CFG.roundSeconds;
-  if (G.extraAdded < TUNE.extraSpinners.length && frac >= TUNE.extraSpinners[G.extraAdded]) {
-    G.extraAdded++;
-    const p = posOf(G.player);
-    const s = SPAWNS.slice().sort((a, b) => dist2(b.x, b.y, p) - dist2(a.x, a.y, p))[0];
-    G.hazards.push(Object.assign(mover(s.x, s.y), { spin: 0 }));
-  }
-  const hs = TUNE.hazardStart + (TUNE.hazardEnd - TUNE.hazardStart) * frac;
-  G.hazards.forEach(h => { stepMover(h, hs, dt, chooseHazard); h.spin += dt * 6; });
-
-  const p = posOf(G.player);
-
-  // Tokens
-  for (let i = 0; i < G.items.length; i++) {
-    const c = G.items[i];
-    if (Math.abs(c.x - p.x) + Math.abs(c.y - p.y) < .5) {
-      G.score += PTS.coin; G.coins++;
-      popup(c.x, c.y, "+" + PTS.coin, "#FFC928");
-      Sound.coin();
-      G.items[i] = freeTile();
-    }
-  }
-
-  // Gem
-  G.nextGem -= dt;
-  if (!G.gem && G.nextGem <= 0) { G.gem = Object.assign(freeTile(), { life: TUNE.gemLife }); }
-  if (G.gem) {
-    G.gem.life -= dt;
-    if (Math.abs(G.gem.x - p.x) + Math.abs(G.gem.y - p.y) < .5) {
-      G.score += PTS.gem; G.gems++;
-      popup(G.gem.x, G.gem.y, "+" + PTS.gem, "#43E6FF");
-      Sound.gem(); buzz(30);
-      G.gem = null; G.nextGem = rand(...TUNE.gemEvery);
-    } else if (G.gem.life <= 0) { G.gem = null; G.nextGem = rand(...TUNE.gemEvery); }
-  }
-
-  // Speed bolt
-  G.nextBolt -= dt;
-  if (!G.bolt && G.nextBolt <= 0) { G.bolt = Object.assign(freeTile(), { life: TUNE.boltLife }); }
-  if (G.bolt) {
-    G.bolt.life -= dt;
-    if (Math.abs(G.bolt.x - p.x) + Math.abs(G.bolt.y - p.y) < .5) {
-      G.boost = TUNE.boostTime;
-      popup(G.bolt.x, G.bolt.y, "Boost", "#7CFF6B");
-      Sound.bolt();
-      G.bolt = null; G.nextBolt = rand(...TUNE.boltEvery);
-    } else if (G.bolt.life <= 0) { G.bolt = null; G.nextBolt = rand(...TUNE.boltEvery); }
-  }
-
-  // Spinner contact
-  if (G.invuln <= 0) {
-    for (const h of G.hazards) {
-      const q = posOf(h);
-      if ((q.x - p.x) ** 2 + (q.y - p.y) ** 2 < .62 * .62) {
-        G.score = Math.max(0, G.score - PTS.hitPenalty);
-        G.hits++;
-        G.stun = TUNE.stun; G.invuln = TUNE.invuln; G.boost = 0;
-        popup(p.x, p.y, "−" + PTS.hitPenalty, "#FF3D7F");
-        Sound.hit(); buzz(140);
-        if (!reducedMotion) G.shake = .25;
-        break;
-      }
-    }
-  }
-
-  G.shake = Math.max(0, G.shake - dt);
-  G.popups.forEach(pp => { pp.life -= dt; pp.y -= dt * 1.2; });
-  G.popups = G.popups.filter(pp => pp.life > 0);
-
-  updateHud();
-  if (G.time <= 0) endRound();
-}
-
-function popup(x, y, text, color) { G.popups.push({ x, y, text, color, life: .8 }); }
-
-let hudScore = -1, hudTime = -1;
-function updateHud() {
-  if (G.score !== hudScore) { hudScore = G.score; $("hud-score").textContent = G.score; }
-  const t = Math.ceil(G.time);
-  if (t !== hudTime) {
-    hudTime = t;
-    $("hud-time").textContent = t;
-    $("hud-time-wrap").classList.toggle("low", t <= 10);
-  }
+  R = createRenderer2D(stage, { skin, reducedMotion });
+  rKind = "2d";
 }
 
 /* ============================================================
-   Rendering
+   Round state
    ============================================================ */
-function resize() {
-  const stage = $("stage");
-  const w = stage.clientWidth - 16, h = stage.clientHeight - 16;
-  if (w <= 0 || h <= 0) return;
-  T = Math.max(10, Math.floor(Math.min(w / COLS, h / ROWS)));
-  dpr = Math.min(window.devicePixelRatio || 1, 3);
-  cv.style.width = T * COLS + "px";
-  cv.style.height = T * ROWS + "px";
-  cv.width = Math.round(T * COLS * dpr);
-  cv.height = Math.round(T * ROWS * dpr);
-  buildStatic();
-  draw();
-}
+let G = null;
+let phase = "idle";       // idle | loading | count | play | paused | over
+let playerName = "";
+let lastResult = null;
+let lastShare = null;
+let wakeLock = null;
+let fps = { frames: 0, time: 0, checked: false };
 
-function buildStatic() {
-  staticLayer = document.createElement("canvas");
-  staticLayer.width = cv.width; staticLayer.height = cv.height;
-  const c = staticLayer.getContext("2d");
-  c.scale(dpr, dpr);
-  const W = COLS * T, H = ROWS * T;
-
-  // Court floor planks
-  for (let x = 0; x < COLS; x++) {
-    c.fillStyle = x % 2 ? "#1D3BA6" : "#2346C0";
-    c.fillRect(x * T, 0, T, H);
-  }
-  // Court markings
-  c.strokeStyle = "rgba(245,247,255,.22)";
-  c.lineWidth = Math.max(1.5, T * .07);
-  c.beginPath(); c.moveTo(0, H / 2); c.lineTo(W, H / 2); c.stroke();
-  c.beginPath(); c.arc(W / 2, H / 2, T * 2.1, 0, Math.PI * 2); c.stroke();
-  c.beginPath(); c.arc(W / 2, 0, T * 3.4, 0, Math.PI); c.stroke();
-  c.beginPath(); c.arc(W / 2, H, T * 3.4, Math.PI, 0); c.stroke();
-
-  // Barriers with yellow padding strips on the sides that face the floor
-  const edge = Math.max(2, Math.round(T * .1));
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
-    if (open(x, y)) continue;
-    const px = x * T, py = y * T;
-    c.fillStyle = "#0E1A5C";
-    c.fillRect(px, py, T, T);
-    c.fillStyle = "#FFC928";
-    if (open(x, y - 1)) c.fillRect(px, py, T, edge);
-    if (open(x, y + 1)) c.fillRect(px, py + T - edge, T, edge);
-    if (open(x - 1, y)) c.fillRect(px, py, edge, T);
-    if (open(x + 1, y)) c.fillRect(px + T - edge, py, edge, T);
-  }
-}
-
-function draw(now = performance.now()) {
-  if (!staticLayer) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.drawImage(staticLayer, 0, 0);
-  if (!G) return;
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (G.shake > 0) ctx.translate((Math.random() - .5) * T * .3, (Math.random() - .5) * T * .3);
-  const cx = x => (x + .5) * T, cy = y => (y + .5) * T;
-  const time = now / 1000;
-
-  // Tokens
-  for (const c of G.items) {
-    const bob = reducedMotion ? 0 : Math.sin(time * 4 + c.x + c.y) * T * .04;
-    ctx.fillStyle = "#FFC928";
-    ctx.beginPath(); ctx.arc(cx(c.x), cy(c.y) + bob, T * .2, 0, 7); ctx.fill();
-    ctx.strokeStyle = "#D9A300"; ctx.lineWidth = T * .06;
-    ctx.beginPath(); ctx.arc(cx(c.x), cy(c.y) + bob, T * .12, 0, 7); ctx.stroke();
-  }
-
-  // Gem
-  if (G.gem && (G.gem.life > 2 || Math.floor(time * 8) % 2)) {
-    const x = cx(G.gem.x), y = cy(G.gem.y), r = T * .3;
-    ctx.fillStyle = "#43E6FF";
-    ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,.7)";
-    ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r * .45, y - r * .1); ctx.lineTo(x, y); ctx.closePath(); ctx.fill();
-  }
-
-  // Speed bolt
-  if (G.bolt && (G.bolt.life > 2 || Math.floor(time * 8) % 2)) {
-    const x = cx(G.bolt.x) - T * .5, y = cy(G.bolt.y) - T * .5, s = T;
-    ctx.fillStyle = "#7CFF6B";
-    ctx.beginPath();
-    [[.58, .12], [.26, .56], [.47, .56], [.4, .88], [.76, .42], [.54, .42]].forEach(([a, b], i) =>
-      i ? ctx.lineTo(x + a * s, y + b * s) : ctx.moveTo(x + a * s, y + b * s));
-    ctx.closePath(); ctx.fill();
-  }
-
-  // Spinners
-  for (const h of G.hazards) {
-    const q = posOf(h);
-    drawSpinner(cx(q.x), cy(q.y), T * .38, h.spin);
-  }
-
-  // Player
-  const p = posOf(G.player);
-  const blink = G.invuln > 0 && G.stun <= 0 && Math.floor(time * 12) % 2;
-  if (!blink) {
-    const x = cx(p.x), y = cy(p.y), r = T * .36;
-    if (G.boost > 0) {
-      ctx.strokeStyle = "#7CFF6B"; ctx.lineWidth = T * .08;
-      ctx.beginPath(); ctx.arc(x, y, r + T * .1, 0, 7); ctx.stroke();
-    }
-    ctx.fillStyle = G.stun > 0 ? "#9AA6D6" : "#F5F7FF";
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-    ctx.strokeStyle = "#FFC928"; ctx.lineWidth = T * .08;
-    ctx.beginPath(); ctx.arc(x, y, r - T * .04, 0, 7); ctx.stroke();
-    const d = G.player.dir || DIRS.down;
-    ctx.fillStyle = "#0A1440";
-    ctx.beginPath(); ctx.arc(x + d.x * r * .42, y + d.y * r * .42, T * .09, 0, 7); ctx.fill();
-    if (G.stun > 0) {
-      ctx.fillStyle = "#FFC928";
-      for (let i = 0; i < 3; i++) {
-        const a = time * 6 + i * 2.1;
-        ctx.beginPath(); ctx.arc(x + Math.cos(a) * r, y - r * .9 + Math.sin(a) * r * .3, T * .06, 0, 7); ctx.fill();
-      }
-    }
-  }
-
-  // Score pop-ups
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.font = `${Math.round(T * .5)}px Bungee, Impact, sans-serif`;
-  for (const pp of G.popups) {
-    ctx.globalAlpha = Math.min(1, pp.life / .4);
-    ctx.fillStyle = "#0A1440"; ctx.fillText(pp.text, cx(pp.x) + 2, cy(pp.y) + 2);
-    ctx.fillStyle = pp.color; ctx.fillText(pp.text, cx(pp.x), cy(pp.y));
-  }
-  ctx.globalAlpha = 1;
-}
-
-function drawSpinner(x, y, r, a) {
-  ctx.save();
-  ctx.translate(x, y); ctx.rotate(a);
-  ctx.fillStyle = "#FF3D7F";
-  ctx.beginPath();
-  for (let i = 0; i < 16; i++) {
-    const rr = i % 2 ? r * .55 : r;
-    const ang = (i / 16) * Math.PI * 2;
-    i ? ctx.lineTo(Math.cos(ang) * rr, Math.sin(ang) * rr) : ctx.moveTo(rr, 0);
-  }
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#0A1440";
-  ctx.beginPath(); ctx.arc(0, 0, r * .28, 0, 7); ctx.fill();
-  ctx.restore();
+function pickMap() {
+  const last = store.get("lastMap", null);
+  const pool = MAPS.filter(m => m.id !== last);
+  const def = pool[(Math.random() * pool.length) | 0];
+  store.set("lastMap", def.id);
+  return buildMap(def);
 }
 
 /* ============================================================
    Loop
    ============================================================ */
+let lastFrame = performance.now();
 function frame(now) {
   const dt = Math.min(.05, (now - lastFrame) / 1000 || 0);
   lastFrame = now;
-  if (phase === "play") update(dt);
-  else if (phase === "count" && G) G.hazards.forEach(h => { h.spin += dt * 3; });
-  draw(now);
+  const active = $("screen-game").classList.contains("active");
+  if (phase === "play" && G) {
+    G.update(dt);
+    for (const e of G.drainEvents()) handleEvent(e);
+    updateHud();
+    watchPerformance(dt);
+  }
+  if (active && R && phase !== "loading") R.render(G, phase === "paused" ? 0 : dt, now);
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(t => { lastFrame = t; requestAnimationFrame(frame); });
+requestAnimationFrame(frame);
+
+// If 3D struggles on this phone, use lighter 3D settings from the next round.
+function watchPerformance(dt) {
+  if (fps.checked || rKind !== "3d") return;
+  fps.frames++; fps.time += dt;
+  if (fps.time > 4) {
+    fps.checked = true;
+    const rate = fps.frames / fps.time;
+    if (rate < 38 && rQuality === "high") store.set("quality", "low");
+  }
+}
+
+/* ============================================================
+   Events → sound, haptics, pop-ups, banners
+   ============================================================ */
+function handleEvent(e) {
+  if (R && R.onEvent) R.onEvent(e);
+  switch (e.type) {
+    case "token": Sound.token(G.combo.mult); popup(e.x, e.y, "+" + e.pts, e.pts > PTS.coin ? "#FFE680" : "#FFC928"); break;
+    case "gem": Sound.gem(); buzz(30); popup(e.x, e.y, "+" + e.pts, "#43E6FF", true); break;
+    case "power":
+      e.kind === "freeze" ? Sound.freeze() : Sound.power(); buzz(40);
+      showBanner({ boost: "Speed boost", shield: "Shield up", magnet: "Magnet", freeze: "Freeze" }[e.kind]);
+      break;
+    case "combo": Sound.combo(e.mult); showBanner("Combo ×" + e.mult); buzz(25); break;
+    case "comboEnd": Sound.comboEnd(); break;
+    case "hit": Sound.hit(); buzz(150); popup(e.x, e.y, "−" + e.pts, "#FF3D7F", true); break;
+    case "shieldBreak": Sound.shieldBreak(); buzz(60); popup(e.x, e.y, "Blocked", "#5BA8FF"); break;
+    case "spawn": Sound.spawn(); if (e.kind === "hunter") showBanner("Hunter incoming"); break;
+    case "rush": Sound.rush(); Sound.musicRush(); showBanner("Final rush: 2× points"); buzz([40, 40, 40]); break;
+    case "tick": Sound.tick(); break;
+    case "end": endRound(); break;
+  }
+}
+
+function popup(x, y, text, color, big) {
+  if (!R) return;
+  const p = R.project(x, y);
+  const s = document.createElement("span");
+  s.textContent = text; s.style.color = color;
+  s.style.left = p.x + "px"; s.style.top = p.y + "px";
+  if (big) s.className = "big";
+  $("fx").append(s);
+  setTimeout(() => s.remove(), 850);
+}
+
+let bannerTimer = null;
+function showBanner(text) {
+  const b = $("banner");
+  b.textContent = text;
+  b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => b.classList.remove("show"), 1500);
+}
+
+/* ============================================================
+   HUD
+   ============================================================ */
+let hudScore = -1, hudTime = -1, effectsKey = "";
+function updateHud() {
+  if (!G) return;
+  if (G.score !== hudScore) { hudScore = G.score; $("hud-score").textContent = G.score; }
+  const t = Math.ceil(G.time);
+  if (t !== hudTime) { hudTime = t; $("hud-time").textContent = t; $("hud-time-wrap").classList.toggle("low", t <= 10); }
+
+  const P = G.player, list = [];
+  if (G.combo.mult > 1) list.push({ k: "combo", label: "×" + G.combo.mult, frac: G.combo.timer / 1.8, cls: "combo" });
+  if (P.boost > 0) list.push({ k: "boost", label: "Speed", frac: P.boost / POWERS.boost.time, color: POWERS.boost.color });
+  if (P.shield) list.push({ k: "shield", label: "Shield", frac: 1, color: POWERS.shield.color });
+  if (P.magnet > 0) list.push({ k: "magnet", label: "Magnet", frac: P.magnet / POWERS.magnet.time, color: POWERS.magnet.color });
+  if (G.freeze > 0) list.push({ k: "freeze", label: "Freeze", frac: G.freeze / POWERS.freeze.time, color: POWERS.freeze.color });
+  if (G.rush) list.push({ k: "rush", label: "2× points", frac: 1, cls: "rush" });
+  const key = list.map(i => i.k + i.label).join("|");
+  const wrap = $("effects");
+  if (key !== effectsKey) {
+    effectsKey = key;
+    wrap.innerHTML = "";
+    for (const i of list) {
+      const el = document.createElement("span");
+      el.className = "pill " + (i.cls || ""); el.dataset.k = i.k;
+      if (i.color) { el.style.color = i.color; const d = document.createElement("i"); d.className = "dot"; d.style.background = i.color; el.append(d); }
+      const lab = document.createElement("span"); lab.textContent = i.label; if (!i.cls) lab.style.color = "var(--line)";
+      const bar = document.createElement("i"); bar.className = "bar";
+      el.append(lab, bar); wrap.append(el);
+    }
+  }
+  for (const i of list) {
+    const bar = wrap.querySelector(`[data-k="${i.k}"] .bar`);
+    if (bar) bar.style.width = Math.max(0, Math.min(1, i.frac)) * 100 + "%";
+  }
+}
 
 /* ============================================================
    Flow: start → countdown → play → result
    ============================================================ */
-$("start-form").addEventListener("submit", e => {
-  e.preventDefault();
-  startFromForm();
-});
+$("start-form").addEventListener("submit", e => { e.preventDefault(); startFromForm(); });
 
 function startFromForm() {
   const name = $("name").value.replace(/\s+/g, " ").trim();
@@ -532,10 +255,7 @@ function startFromForm() {
   if (name.length > 16) { err.textContent = "Keep your name to 16 characters."; return; }
   if (CFG.maxAttemptsPerName > 0) {
     const used = store.get("attempts", {})[nameKey(name)] || 0;
-    if (used >= CFG.maxAttemptsPerName) {
-      err.textContent = `You've used all ${CFG.maxAttemptsPerName} attempts for this name.`;
-      return;
-    }
+    if (used >= CFG.maxAttemptsPerName) { err.textContent = `You've used all ${CFG.maxAttemptsPerName} attempts for this name.`; return; }
   }
   err.textContent = "";
   playerName = name;
@@ -546,15 +266,31 @@ function startFromForm() {
   startRound();
 }
 
-function startRound() {
+async function startRound() {
+  if (phase === "loading") return;
   if (CFG.maxAttemptsPerName > 0) {
     const a = store.get("attempts", {});
     a[nameKey(playerName)] = (a[nameKey(playerName)] || 0) + 1;
     store.set("attempts", a);
   }
-  newRound();
+  phase = "loading";
+  G = null;
   show("screen-game");
-  requestAnimationFrame(resize);
+  $("effects").innerHTML = ""; effectsKey = ""; $("fx").innerHTML = "";
+  $("hud-score").textContent = "0"; $("hud-time").textContent = CFG.roundSeconds; $("hud-time-wrap").classList.remove("low");
+  const ov = $("overlay");
+  ov.innerHTML = `<div class="count-wrap"><div class="map-name">Loading arena…</div></div>`; ov.classList.add("show");
+  await new Promise(r => requestAnimationFrame(r));
+  await ensureRenderer();
+  currentMap = pickMap();
+  G = new Round({ seconds: CFG.roundSeconds, points: PTS, map: currentMap });
+  G.attemptId = newAttemptId();
+  fps = { frames: 0, time: 0, checked: false };
+  R.setMap(currentMap);
+  R.newRound();
+  R.resize();
+  hudScore = -1; hudTime = -1;
+  updateHud();
   keepAwake(true);
   countdown();
 }
@@ -566,12 +302,16 @@ function countdown() {
   let i = 0;
   const next = () => {
     if (phase !== "count") return;
-    if (i >= steps.length) { ov.classList.remove("show"); ov.innerHTML = ""; phase = "play"; return; }
+    if (i >= steps.length) {
+      ov.classList.remove("show"); ov.innerHTML = ""; phase = "play";
+      Sound.musicStart(false);
+      return;
+    }
     ov.innerHTML = "";
-    const el = document.createElement("div");
-    el.className = "count";
-    el.textContent = steps[i];
-    ov.append(el); ov.classList.add("show");
+    const wrap = document.createElement("div"); wrap.className = "count-wrap";
+    const m = document.createElement("div"); m.className = "map-name"; m.textContent = currentMap.name; wrap.append(m);
+    const el = document.createElement("div"); el.className = "count"; el.textContent = steps[i];
+    wrap.append(el); ov.append(wrap); ov.classList.add("show");
     steps[i] === "Go" ? Sound.go() : Sound.count();
     i++;
     setTimeout(next, i === steps.length ? 450 : 750);
@@ -579,86 +319,110 @@ function countdown() {
   next();
 }
 
+function steer(name) { if (G && (phase === "play" || phase === "count")) G.steer(name); }
+
 function pause() {
   if (phase !== "play") return;
   phase = "paused";
+  Sound.musicStop();
   const ov = $("overlay");
   ov.innerHTML = `<div class="paused"><h2>Paused</h2><div class="stack">
     <button class="btn primary" id="btn-resume" type="button">Resume</button>
     <button class="btn ghost" id="btn-quit" type="button">Quit round</button></div></div>`;
   ov.classList.add("show");
   $("btn-resume").onclick = resume;
-  $("btn-quit").onclick = () => { ov.classList.remove("show"); phase = "idle"; keepAwake(false); show("screen-welcome"); };
+  $("btn-quit").onclick = () => { ov.classList.remove("show"); phase = "idle"; G = null; keepAwake(false); updateBestLine(); show("screen-welcome"); };
   $("btn-resume").focus();
 }
 function resume() {
   if (phase !== "paused") return;
-  const ov = $("overlay");
-  ov.classList.remove("show"); ov.innerHTML = "";
+  const ov = $("overlay"); ov.classList.remove("show"); ov.innerHTML = "";
   phase = "play";
+  Sound.musicStart(G && G.rush);
 }
 
 function endRound() {
   if (phase !== "play") return;
   phase = "over";
-  G.time = 0; updateHud();
-  Sound.end(); buzz([80, 60, 80]);
+  Sound.musicStop(); Sound.end(); buzz([80, 60, 80]);
   keepAwake(false);
-  const result = {
-    name: playerName, score: G.score, coins: G.coins, gems: G.gems, hits: G.hits,
+  updateHud();
+  const res = G.result();
+  const result = Object.freeze({
+    name: playerName, score: res.score, coins: res.coins, gems: res.gems, hits: res.hits,
     attemptId: G.attemptId
-  };
-  Object.freeze(result);
-  setTimeout(() => showResult(result), 900);
+  });
+  const badges = badgesFor(res);
+  setTimeout(() => showResult(result, res, badges), 1000);
 }
 
-function showResult(r) {
+function showResult(r, full, badges) {
   $("over-name").textContent = r.name;
-  $("over-score").textContent = r.score;
+  $("over-map").textContent = full.map;
+  countUp($("over-score"), r.score);
   $("st-coins").textContent = r.coins;
   $("st-gems").textContent = r.gems;
   $("st-hits").textContent = r.hits;
+
+  const ul = $("badges"); ul.innerHTML = "";
+  badges.slice(0, 4).forEach(b => {
+    const li = document.createElement("li");
+    const m = document.createElement("span"); m.className = "medal"; m.textContent = b.name[0];
+    const tx = document.createElement("span");
+    const bn = document.createElement("b"); bn.textContent = b.name;
+    const sm = document.createElement("small"); sm.textContent = b.desc;
+    tx.append(bn, sm); li.append(m, tx); ul.append(li);
+  });
+
+  const pbs = store.get("pb", {}), k = nameKey(r.name);
+  const newPb = pbs[k] === undefined || r.score > pbs[k];
+  if (newPb) { pbs[k] = r.score; store.set("pb", pbs); }
+  lastShare = { score: r.score, newPb };
+
   const again = $("btn-again");
-  const left = CFG.maxAttemptsPerName > 0
-    ? CFG.maxAttemptsPerName - (store.get("attempts", {})[nameKey(r.name)] || 0) : Infinity;
+  const left = CFG.maxAttemptsPerName > 0 ? CFG.maxAttemptsPerName - (store.get("attempts", {})[k] || 0) : Infinity;
   again.disabled = left <= 0;
   again.textContent = left <= 0 ? "No attempts left" : left === Infinity ? "Play again" : `Play again (${left} left)`;
   show("screen-over");
   submit(r);
 }
 
+function countUp(el, target) {
+  if (reducedMotion || target === 0) { el.textContent = target; return; }
+  const start = performance.now(), dur = Math.min(1200, 300 + target);
+  const tick = now => {
+    const k = Math.min(1, (now - start) / dur);
+    el.textContent = Math.round(target * (1 - (1 - k) ** 3));
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 async function submit(r) {
   const st = $("over-status");
-  st.className = "status";
-  st.textContent = "Saving your score…";
-  const slow = setTimeout(() => {
-    st.textContent = "Waiting for a connection. Keep this page open and your score will be sent.";
-  }, 10000);
+  st.className = "status"; st.textContent = "Saving your score…";
+  const slow = setTimeout(() => { st.textContent = "Waiting for a connection. Keep this page open and your score will be sent."; }, 10000);
   try {
     const res = await board.submit(r);
     clearTimeout(slow);
     lastResult = res;
-    st.className = "status ok";
-    st.textContent = "";
+    st.className = "status ok"; st.textContent = "";
     const head = document.createElement("div");
     head.textContent = res.improved ? "Score saved. That's your best yet." : `Score saved. Your best is still ${res.best}.`;
     st.append(head);
     if (res.rank) {
       const line = document.createElement("div");
-      const rank = document.createElement("span");
-      rank.className = "rank";
-      rank.textContent = "#" + res.rank;
+      const rank = document.createElement("span"); rank.className = "rank"; rank.textContent = "#" + res.rank;
       line.append("You're ", rank, ` of ${res.total} on the leaderboard.`);
       st.append(line);
+      if (lastShare) lastShare.rank = res.rank;
     }
   } catch (e) {
     clearTimeout(slow);
     console.error(e);
-    st.className = "status bad";
-    st.textContent = "";
+    st.className = "status bad"; st.textContent = "";
     const msg = document.createElement("div");
-    const code = e && e.code || "";
-    if (code === "permission-denied") {
+    if (e && e.code === "permission-denied") {
       msg.textContent = "The leaderboard didn't accept this score. The event may be closed, or a score was sent from this phone less than a minute ago.";
       st.append(msg);
     } else {
@@ -671,10 +435,23 @@ async function submit(r) {
   }
 }
 
+$("btn-share").onclick = async () => {
+  if (!lastShare) return;
+  const text = `I scored ${lastShare.score}${lastShare.rank ? ` (#${lastShare.rank})` : ""} in ${CFG.eventName}. Can you beat it?`;
+  const url = location.href.split("#")[0];
+  try {
+    if (navigator.share) await navigator.share({ title: CFG.eventName, text, url });
+    else {
+      await navigator.clipboard.writeText(text + " " + url);
+      $("btn-share").textContent = "Copied";
+      setTimeout(() => { $("btn-share").textContent = "Share score"; }, 1500);
+    }
+  } catch {}
+};
+
 $("btn-again").onclick = () => { Sound.unlock(); startRound(); };
 $("btn-mute").onclick = () => { Sound.unlock(); Sound.toggle(); updateMuteIcon(); };
 $("btn-pause").onclick = () => (phase === "paused" ? resume() : pause());
-
 function updateMuteIcon() {
   const b = $("btn-mute");
   b.setAttribute("aria-label", Sound.muted ? "Turn sound on" : "Mute sound");
@@ -682,8 +459,9 @@ function updateMuteIcon() {
 }
 
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
-window.addEventListener("resize", () => { if (phase !== "idle") resize(); });
-if (window.ResizeObserver) new ResizeObserver(() => { if ($("screen-game").classList.contains("active")) resize(); }).observe($("stage"));
+const onResize = () => { if (R && $("screen-game").classList.contains("active")) R.resize(); };
+window.addEventListener("resize", onResize);
+if (window.ResizeObserver) new ResizeObserver(onResize).observe(stage);
 
 /* ============================================================
    Leaderboard screen
@@ -692,74 +470,57 @@ let boardBack = "screen-welcome";
 function openBoard(from) {
   boardBack = from;
   show("screen-board");
-  const list = $("board-rows");
-  const live = $("board-live");
+  const list = $("board-rows"), live = $("board-live");
   list.innerHTML = `<li class="empty">Loading scores…</li>`;
   live.classList.remove("off");
   live.textContent = board.mode === "local" ? "This device only" : "Updates live";
   const myId = (lastResult && lastResult.myId) || (playerName && board.myIdFor(playerName));
   boardUnsub = board.subscribe(rows => {
     list.innerHTML = "";
-    if (!rows.length) {
-      list.innerHTML = `<li class="empty">No scores yet. Play a round to claim first place.</li>`;
-      return;
-    }
+    if (!rows.length) { list.innerHTML = `<li class="empty">No scores yet. Play a round to claim first place.</li>`; return; }
     rows.forEach((r, i) => {
       const li = document.createElement("li");
       li.className = "row" + (i < 3 ? ` top${i + 1}` : "") + (r.id === myId ? " me" : "");
       const rk = document.createElement("span"); rk.className = "r"; rk.textContent = i + 1;
       const nm = document.createElement("span"); nm.className = "n"; nm.textContent = r.name;
       const sc = document.createElement("span"); sc.className = "s"; sc.textContent = r.score;
-      li.append(rk, nm, sc);
-      list.append(li);
+      li.append(rk, nm, sc); list.append(li);
     });
   }, err => {
     console.error(err);
-    live.classList.add("off");
-    live.textContent = "Offline";
+    live.classList.add("off"); live.textContent = "Offline";
     list.innerHTML = `<li class="empty">Couldn't load the leaderboard. Check your connection and open it again.</li>`;
   });
 }
 $("btn-board").onclick = () => openBoard("screen-welcome");
 $("btn-over-board").onclick = () => openBoard("screen-over");
 $("btn-closed-board").onclick = () => openBoard("screen-closed");
-$("btn-board-back").onclick = () => show(boardBack);
+$("btn-board-back").onclick = () => { if (boardBack === "screen-welcome") updateBestLine(); show(boardBack); };
 
 /* ============================================================
    Controls: keyboard, swipe, d-pad
    ============================================================ */
-const KEYS = {
-  ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
-  w: "up", s: "down", a: "left", d: "right", W: "up", S: "down", A: "left", D: "right"
-};
+const KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", w: "up", s: "down", a: "left", d: "right", W: "up", S: "down", A: "left", D: "right" };
 window.addEventListener("keydown", e => {
   if (!$("screen-game").classList.contains("active")) return;
   if (KEYS[e.key]) { e.preventDefault(); steer(KEYS[e.key]); }
   else if (e.key === "p" || e.key === "P" || e.key === "Escape") { phase === "paused" ? resume() : pause(); }
 });
 
-// Swipe anywhere on the arena. Keep your finger down and swipe again to chain turns.
 (function swipe() {
-  const stage = $("stage");
   let sx = 0, sy = 0, active = false;
-  const TH = 18;
-  stage.addEventListener("pointerdown", e => {
-    if (e.pointerType === "mouse") return;
-    active = true; sx = e.clientX; sy = e.clientY;
-  });
+  stage.addEventListener("pointerdown", e => { if (e.pointerType === "mouse") return; active = true; sx = e.clientX; sy = e.clientY; });
   stage.addEventListener("pointermove", e => {
     if (!active) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < TH) return;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
     steer(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
     sx = e.clientX; sy = e.clientY;
   });
   const stop = () => { active = false; };
-  stage.addEventListener("pointerup", stop);
-  stage.addEventListener("pointercancel", stop);
+  stage.addEventListener("pointerup", stop); stage.addEventListener("pointercancel", stop);
 })();
 
-// D-pad: press, or slide your thumb between arrows without lifting it.
 (function dpad() {
   const pad = $("dpad");
   let current = null;
@@ -769,32 +530,19 @@ window.addEventListener("keydown", e => {
     current = btn;
     if (btn) { btn.classList.add("on"); steer(btn.dataset.dir); }
   };
-  const btnAt = (x, y) => {
-    const el = document.elementFromPoint(x, y);
-    return el && el.closest ? el.closest("#dpad button") : null;
-  };
-  pad.addEventListener("pointerdown", e => {
-    e.preventDefault();
-    Sound.unlock();
-    set(btnAt(e.clientX, e.clientY));
-  });
-  pad.addEventListener("pointermove", e => {
-    if (!current) return;
-    const b = btnAt(e.clientX, e.clientY);
-    if (b) set(b);
-  });
+  const btnAt = (x, y) => { const el = document.elementFromPoint(x, y); return el && el.closest ? el.closest("#dpad button") : null; };
+  pad.addEventListener("pointerdown", e => { e.preventDefault(); Sound.unlock(); set(btnAt(e.clientX, e.clientY)); });
+  pad.addEventListener("pointermove", e => { if (!current) return; const b = btnAt(e.clientX, e.clientY); if (b) set(b); });
   const release = () => set(null);
-  pad.addEventListener("pointerup", release);
-  pad.addEventListener("pointercancel", release);
+  pad.addEventListener("pointerup", release); pad.addEventListener("pointercancel", release);
   pad.addEventListener("contextmenu", e => e.preventDefault());
 })();
 
-// Block the long-press menu and double-tap zoom during play
 $("screen-game").addEventListener("contextmenu", e => e.preventDefault());
 document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
 
 /* ============================================================
-   Android niceties: fullscreen, portrait lock, screen stays on
+   Android niceties
    ============================================================ */
 function goFullscreen() {
   if (!matchMedia("(pointer: coarse)").matches) return;
@@ -803,19 +551,14 @@ function goFullscreen() {
   if (!req || document.fullscreenElement) return;
   try {
     const p = req.call(el, { navigationUI: "hide" });
-    if (p && p.then) p.then(() => {
-      if (screen.orientation && screen.orientation.lock) screen.orientation.lock("portrait").catch(() => {});
-    }).catch(() => {});
+    if (p && p.then) p.then(() => { if (screen.orientation && screen.orientation.lock) screen.orientation.lock("portrait").catch(() => {}); }).catch(() => {});
   } catch {}
 }
-
 async function keepAwake(on) {
   try {
     if (on && "wakeLock" in navigator && !wakeLock) {
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } else if (!on && wakeLock) {
-      await wakeLock.release(); wakeLock = null;
-    }
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
   } catch {}
 }

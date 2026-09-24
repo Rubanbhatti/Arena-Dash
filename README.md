@@ -1,6 +1,6 @@
 # Arena Dash
 
-A 60-second arcade game for live events. Players scan a QR code, enter a name, collect tokens and dodge spinners on their phone, and their best score goes onto a shared live leaderboard.
+A 60-second 3D arcade game for live events. Players scan a QR code, enter a name, collect tokens and dodge spinners on their phone, and their best score goes onto a shared live leaderboard.
 
 - `index.html` is the game (phones, tablets, desktop).
 - `leaderboard.html` is the big-screen leaderboard for a TV or projector, with a QR code and CSV export.
@@ -52,6 +52,18 @@ Each finished round writes three things in one atomic batch: a private round rec
 
 The rules reject malformed data, names over 16 characters, scores above the cap, edits or deletions of existing scores, and more than one submission per phone every 45 seconds. Like every browser game, a determined person with developer tools could still fake a plausible score, so if there's a prize, check the winners' entries in the `scores` collection (token, gem and hit counts) before announcing.
 
+## What's in the game
+
+- **3D arena** built with Three.js: lit barriers with glowing trims, spinning coins, shadows, particle bursts and a camera that gently follows you. Players can switch to **Classic** 2D graphics on the start screen. Phones without 3D support switch automatically, and slow phones get lighter 3D settings from their next round.
+- **Three arenas**: Center Court, Crossfire and The Loop. Each round picks one at random, never the same one twice in a row.
+- **Combos**: grabbing tokens quickly in a row raises a multiplier up to ×4. Getting hit resets it.
+- **Power-ups**: Speed (move faster), Shield (blocks one hit), Magnet (pulls in nearby tokens) and Freeze (stops every enemy and makes them harmless for 4 seconds).
+- **Two enemy types**: spinners roam the arena and more join as time passes; a hunter arrives halfway through and follows the shortest path to you.
+- **Final rush**: the last 10 seconds score double, the music speeds up and the arena lights pulse.
+- **Badges** on the result screen (Untouchable, Combo king, Gem hunter and more), a personal best on the start screen, player colours, a **Share score** button, sound effects and music.
+
+The saved data is unchanged from the first version, so the Firebase setup and rules keep working as they are.
+
 ## Controls
 
 - **Phone:** the on-screen arrow pad (you can slide your thumb between arrows), or swipe on the arena. The game goes full screen, locks to portrait and keeps the screen awake on Android.
@@ -70,7 +82,12 @@ index.html          game page
 leaderboard.html    big-screen leaderboard
 style.css           styles
 config.js           event settings + Firebase keys
-js/game.js          game engine, controls, screens
+js/game.js          screens, HUD, controls, round flow
+js/engine.js        game rules (movement, scoring, power-ups, enemies)
+js/maps.js          the three arena layouts
+js/render3d.js      3D graphics (Three.js, loaded from jsDelivr)
+js/render2d.js      Classic 2D graphics and fallback
+js/audio.js         sound effects and music
 js/board.js         leaderboard storage (Firebase or local test mode)
 firestore.rules     database security rules
 manifest.webmanifest, icon.svg   home-screen icon

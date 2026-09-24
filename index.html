@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Barlow+Semi+Condensed:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -24,10 +25,11 @@
     <p class="subtitle" id="subtitle"></p>
 
     <ul class="how">
-      <li><span class="ico"><i class="ico-coin"></i></span><span><b>Tokens</b> +<span data-pts="coin">10</span></span></li>
+      <li><span class="ico"><i class="ico-coin"></i></span><span><b>Tokens</b> +<span data-pts="coin">10</span>. Grab them quickly in a row to build a combo up to ×4.</span></li>
       <li><span class="ico"><i class="ico-gem"></i></span><span><b>Gems</b> +<span data-pts="gem">40</span>, but they vanish fast</span></li>
-      <li><span class="ico"><i class="ico-bolt"></i></span><span><b>Bolts</b> give you a speed boost</span></li>
-      <li><span class="ico"><i class="ico-spin"></i></span><span><b>Spinners</b> cost −<span data-pts="hitPenalty">10</span> and stun you</span></li>
+      <li><span class="ico ico-powers"><i style="background:#7CFF6B"></i><i style="background:#5BA8FF"></i><i style="background:#FF8A3D"></i><i style="background:#CFF6FF"></i></span><span><b>Power-ups</b>: speed, shield, magnet and freeze</span></li>
+      <li><span class="ico"><i class="ico-spin"></i></span><span><b>Spinners</b> and <b>hunters</b> cost −<span data-pts="hitPenalty">10</span> and break your combo</span></li>
+      <li><span class="ico"><i class="ico-rush"></i></span><span>The last 10 seconds score <b>double</b></span></li>
     </ul>
 
     <form id="start-form" novalidate>
@@ -36,6 +38,18 @@
         <input id="name" type="text" maxlength="16" autocomplete="nickname" autocapitalize="words"
                enterkeyhint="go" spellcheck="false" placeholder="e.g. Ayesha K">
       </label>
+      <p class="best-line" id="best-line" hidden></p>
+      <fieldset class="picker">
+        <legend>Your player</legend>
+        <div class="skins" id="skins" role="radiogroup" aria-label="Player colour"></div>
+      </fieldset>
+      <fieldset class="picker">
+        <legend>Graphics</legend>
+        <div class="seg" role="radiogroup" aria-label="Graphics">
+          <button type="button" role="radio" data-gfx="3d">3D</button>
+          <button type="button" role="radio" data-gfx="2d">Classic</button>
+        </div>
+      </fieldset>
       <p class="error" id="start-error" role="alert"></p>
       <div class="stack">
         <button class="btn primary" id="btn-start" type="submit">Start game</button>
@@ -68,7 +82,9 @@
 
   <div class="play">
     <div class="stage" id="stage">
-      <canvas id="cv" aria-label="Game arena"></canvas>
+      <div class="effects" id="effects" aria-live="off"></div>
+      <div class="fx" id="fx" aria-hidden="true"></div>
+      <div class="banner" id="banner" aria-live="polite"></div>
       <div class="overlay" id="overlay"></div>
     </div>
     <div class="dpad-wrap">
@@ -88,16 +104,21 @@
 <section id="screen-over" class="screen court-bg">
   <div class="result welcome">
     <h2>Time's up, <span id="over-name"></span></h2>
+    <p class="over-map" id="over-map"></p>
     <div class="final" id="over-score">0</div>
     <div class="stats">
       <div class="stat"><strong id="st-coins">0</strong><span>tokens</span></div>
       <div class="stat"><strong id="st-gems">0</strong><span>gems</span></div>
       <div class="stat"><strong id="st-hits">0</strong><span>hits</span></div>
     </div>
+    <ul class="badges" id="badges"></ul>
     <div class="status" id="over-status" role="status" aria-live="polite">Saving your score…</div>
     <div class="stack">
       <button class="btn primary" id="btn-again" type="button">Play again</button>
-      <button class="btn ghost" id="btn-over-board" type="button">View leaderboard</button>
+      <div class="pair">
+        <button class="btn ghost" id="btn-over-board" type="button">Leaderboard</button>
+        <button class="btn ghost" id="btn-share" type="button">Share score</button>
+      </div>
     </div>
   </div>
 </section>
