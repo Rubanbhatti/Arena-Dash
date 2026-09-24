@@ -22,11 +22,12 @@ window.ARENA_CONFIG = {
   // Firebase project settings (Project settings → General → Your apps → Web app).
   // Leave apiKey empty to run in local test mode (scores stay on this device only).
   firebase: {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
+    apiKey: "AIzaSyAhE_si2BKgyt4BgtdZz5otVODnGwBQb8Y",
+  authDomain: "arena-dash-9f3b3.firebaseapp.com",
+  projectId: "arena-dash-9f3b3",
+  storageBucket: "arena-dash-9f3b3.firebasestorage.app",
+  messagingSenderId: "842610119088",
+  appId: "1:842610119088:web:1373560419814d404d0675",
+  measurementId: "G-S2WB34F2N2"
   }
 };
